@@ -28,7 +28,30 @@ has = (function(g, d){
         return testCache[name]; // Boolean
     }
     
-    function add(/* String */name, /* Function */test, /* Boolean? */now){
+    function Promise() {
+        this.callbacks = [];
+        this.result = undefined;
+
+        this.addCallback = function(fn) {
+            if (this.result === undefined) {
+                this.callbacks.push(fn);
+            } else {
+                fn(this.result);
+            }
+        };
+
+        this.done = function(result) {
+            if (this.result !== undefined) {
+                return;
+            }
+            this.result = result;
+            for (;this.callbacks.length;) {
+                this.callbacks.pop()(result);
+            }
+        };
+    }
+
+    function add(/* String */name, /* Function */test, /* Object? */opts){
         // summary: Register a new feature detection test for some named feature
         //
         // name: String
@@ -37,14 +60,23 @@ has = (function(g, d){
         // test: Function
         //      A test function to register. If a function, queued for testing until actually
         //      needed. The test function should return a boolean indicating
-        //      the presence of a feature or bug.
+        //      the presence of a feature or bug, or if it is async, call its promise.done
+        //      with the boolean result.
         //
-        // now: Boolean? 
-        //      Optional. Omit if `test` is not a function. Provides a way to immediately
-        //      run the test and cache the result.
+        // opts: Object?
+        //      Optional. An object of test options whose properties are defined as:
+        //
+        //      now: Boolean?
+        //          Optional. Omit if `test` is not a function. Provides a way to immediately
+        //          run the test and cache the result.
+        //
+        //      async: Boolean?
+        //          Optional. Specifies that the test function is run asynchronously.
+        //          Test function returns a promise rather than a boolean result.
+        //      
         // example:
         //      A redundant test, testFn with immediate execution:
-        //  |       has.add("javascript", function(){ return true; }, true); 
+        //  |       has.add("javascript", function(){ return true; }, { now: true }); 
         //  
         // example:
         //      Again with the redundantness. You can do this in your tests, but we should
@@ -60,7 +92,27 @@ has = (function(g, d){
         //  |           // e == the generic element. a `has` element.
         //  |           return false; // fake test, byid-when-form-has-name-matching-an-id is slightly longer
         //  |       });
-        testCache[name] = now ? test(g, d, el) : test;
+        var o = {
+            now: false,
+            async: false
+        };
+        for (optName in opts) {
+            if (opts.hasOwnProperty(optName)) {
+                o[optName] = opts[optName];
+            }
+        }
+        var _test = test;
+        if (o.async) {
+            var p = new Promise();
+            _test = function(g, d, el) {
+                test(g, d, el, p);
+                return p;
+            }
+        }
+        if (o.now) {
+            _test = test(g, d, el);
+        }
+        testCache[name] = _test;
     }
     
     // cssprop adapted from http://gist.github.com/598008 (thanks, ^pi)
@@ -105,7 +157,14 @@ has = (function(g, d){
         var ret = {};
         for(var i in testCache){
             try{
-                ret[i] = has(i);
+                var _ret = has(i);
+                if (_ret !== null && typeof _ret === "object") {
+                    _ret.addCallback(function(result) {
+                        ret[i] = result;
+                    });
+                } else {
+                    ret[i] = _ret;
+                }
             }catch(e){
                 ret[i] = "error";
                 ret[i].ERROR_MSG = e;
